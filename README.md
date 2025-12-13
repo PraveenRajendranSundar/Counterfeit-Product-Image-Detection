@@ -392,7 +392,7 @@ Project Root/
 │       └── test/{images}                 # Test images (flat)
 ├── Counterfeit_product_data - *.csv      # Training CSVs (one per brand)
 ├── test.csv                              # Test CSV
-├── training3 (1).ipynb                   # Main notebook
+├── Model_evaluation_train_test.ipynb                   # Main notebook
 └── best_model.pth                        # Saved model (after training)
 ```
 
