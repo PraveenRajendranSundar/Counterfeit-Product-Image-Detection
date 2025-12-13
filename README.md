@@ -12,36 +12,49 @@ This project implements a binary classifier that predicts whether a sneaker list
 
 ### Model Architecture
 
-The model (`ViTMultiHeadFixed`) consists of:
+The model (`ViTMultiHeadImproved`) consists of:
 
 1. **Image Backbone**: Pretrained ViT-Base-Patch16-224 from `timm` library
    - Extracts 768-dimensional image features
-   - Projected to 512-dimensional embeddings
+   - **Partial Fine-Tuning**: First 2 transformer layers are frozen, remaining 10 layers are fine-tuned
+   - Projected to 512-dimensional embeddings (with Dropout 0.15 and LayerNorm)
 
 2. **Brand Embedding**: Learnable embedding layer (64 dimensions) for brand classification
    - Maps brand names (Adidas, Nike, Jordan, Puma, Reebok) to dense vectors
 
 3. **Price Projection**: MLP that projects price (log-normalized and standardized) to 64 dimensions
+   - Architecture: Linear(1 → 64) + ReLU + Dropout(0.1) + LayerNorm
 
 4. **Multi-Head Output**:
    - **Authenticity Head**: Combines image (512) + brand (64) + price (64) → predicts Authentic/Fake
-     - Architecture: 512 → 128 → 1 (with ReLU and Dropout)
+     - Architecture: Linear(640 → 512) + ReLU + Dropout(0.15) → Linear(512 → 256) + ReLU + Dropout(0.25) → Linear(256 → 1)
    - **Brand Classification Head**: Uses image features alone → predicts brand (auxiliary task)
-     - Architecture: 512 → 256 → num_brands (with ReLU and Dropout)
+     - Architecture: Linear(512 → 256) + ReLU + Dropout(0.1) → Linear(256 → 5 brands)
    - **Contrastive Learning Branch**: Projects image embeddings for supervised contrastive loss
+     - Architecture: Linear(512 → 512) + ReLU + LayerNorm
 
 ### Training Strategy
 
 The model is trained with three loss components:
 
-1. **Primary Loss**: Binary Cross-Entropy (BCE) for authenticity prediction
-2. **Auxiliary Loss**: Cross-Entropy for brand classification (weight: 0.5)
-3. **Contrastive Loss**: Supervised contrastive loss for brand-based image clustering (weight: 0.1)
+1. **Primary Loss**: Binary Cross-Entropy with Logits (BCEWithLogitsLoss) for authenticity prediction
+   - Standard BCE loss (no focal loss, no label smoothing)
+2. **Auxiliary Loss**: Cross-Entropy for brand classification (weight: 0.3)
+   - Helps the model learn brand-specific visual patterns
+3. **Contrastive Loss**: Supervised contrastive loss for brand-based image clustering (weight: 0.03)
+   - Temperature: 0.1 (sharper contrast)
+   - Encourages images of the same brand to cluster together
+
+**Total Loss Formula**:
+```
+Total Loss = Authenticity Loss + 0.3 × Brand Loss + 0.03 × Contrastive Loss
+```
 
 This multi-task learning approach helps the model learn better image representations by:
-- Forcing the model to identify brands from images
+- Forcing the model to identify brands from images (like catches spelling mistakes in logos)
 - Encouraging similar images of the same brand to cluster together
 - Using price as additional signal for authenticity
+- **Partial Fine-Tuning**: Freezing early layers preserves general features while fine-tuning later layers for domain-specific patterns
 
 ---
 
@@ -174,21 +187,37 @@ sln,Image Name,Brand,Price,Authentic
 
 ### Training Configuration
 
-Key hyperparameters (editable in Cell 1):
+Key hyperparameters (editable in Cell 2):
 
 ```python
-BATCH_SIZE = 24
+BATCH_SIZE = 16
 IMG_SIZE = 224
-NUM_EPOCHS = 12
+NUM_EPOCHS = 20
 LR = 2e-4
 WEIGHT_DECAY = 1e-4
 BACKBONE = 'vit_base_patch16_224'
-FREEZE_BACKBONE = False
+FREEZE_LAYERS = 2  # Freeze first 2 transformer layers, train remaining 10
 BRAND_EMBED_DIM = 64
 OUT_DIM = 512
 USE_CONTRASTIVE = True
+CONTRASTIVE_TEMPERATURE = 0.1
 AUX_BRAND_LOSS = True
+BRAND_LOSS_WEIGHT = 0.3
+CONTRASTIVE_LOSS_WEIGHT = 0.03
+USE_FOCAL_LOSS = False
+USE_MIXUP = False
+LABEL_SMOOTHING = 0.0
+PREDICTION_THRESHOLD = 0.4  # Lower threshold to reduce false positives
+USE_EARLY_STOPPING = True
+EARLY_STOP_PATIENCE = 7
 ```
+
+**Data Augmentation** (minimal to preserve authentic details):
+- Resize to 224×224
+- Random horizontal flip (50% probability)
+- Minimal rotation (±5 degrees)
+- Minimal color jitter (brightness/contrast/saturation: 0.05)
+- **No** random crop, perspective, affine transforms, or random erasing (preserves text/logo details)
 
 ### Training Pipeline (Step-by-Step)
 
@@ -251,13 +280,13 @@ For each epoch:
 2. **Initialize Test Dataset**: Uses `image_root_override` parameter to point to `data/sneakers/test/`
 3. **Create Test DataLoader**: Batch size 32, no shuffling
 
-### Step 2: Run Inference (Cell 15-16)
+### Step 2: Run Inference (Cell 17-18)
 
 1. **Load Saved Model**: Load the best model checkpoint (if not already in memory)
 2. **Predict**: For each batch:
    - Forward pass through model
    - Apply sigmoid to get probabilities
-   - Threshold at 0.5 for binary predictions
+   - Threshold at 0.4 for binary predictions (reduces false positives)
 3. **Compute Metrics** (if ground truth available):
    - Accuracy
    - AUC-ROC
@@ -302,51 +331,53 @@ sln,Image Name,Brand,Price,Authentic,Pred_Prob,Pred_Label
 The model combines all three factors:
 ```
 Combined Features = [Image Embedding (512) | Brand Embedding (64) | Price Embedding (64)]
+                    = 640-dimensional vector
+
 Authenticity Score = AuthHead(Combined Features)
-Prediction = 1 if sigmoid(Authenticity Score) >= 0.5 else 0
+                    = Linear(640 → 512) → ReLU → Dropout(0.15)
+                    → Linear(512 → 256) → ReLU → Dropout(0.25)
+                    → Linear(256 → 1)
+
+Probability = Sigmoid(Authenticity Score)  # Maps to [0, 1]
+
+Prediction = {
+    1 (Authentic) if Probability >= 0.4
+    0 (Fake)      if Probability < 0.4
+}
 ```
+
+**Note**: The prediction threshold is set to 0.4 (instead of 0.5) to reduce false positives (authentic shoes incorrectly marked as fake).
 
 ---
 
 ## Expected Performance
 
-Based on the training notebook:
-- **Validation Accuracy**: ~75%+ (after epoch 1)
-- **Test Accuracy**: ~84.62%
-- **Test AUC**: ~0.95
+Based on the latest training results:
 
-Note: Performance may vary based on dataset size and quality.
+### Training Results
+- **Best Validation Accuracy**: 94.23%
+- **Final Train Loss**: 0.108777
+- **Final Validation Loss**: 0.435927
+
+### Test Results
+- **Test Accuracy**: 81.82%
+- **Test AUC**: 0.8941
+
+**Note**: Performance may vary based on dataset size and quality. The model uses partial fine-tuning (freezing first 2 layers) and minimal augmentation to preserve authentic details while preventing overfitting.
 
 ---
 
 ## Key Design Decisions
 
 1. **Multimodal Fusion**: Combining image, brand, and price provides complementary signals
-2. **Multi-Task Learning**: Brand classification as auxiliary task improves image representations
-3. **Contrastive Learning**: Helps cluster images by brand, improving generalization
+2. **Multi-Task Learning**: Brand classification as auxiliary task improves image representations and helps catch spelling mistakes in logos
+3. **Contrastive Learning**: Helps cluster images by brand, improving generalization (weight: 0.03)
 4. **Price Normalization**: Log-transform + standardization handles price skewness
 5. **Stratified Split**: Ensures brand distribution in train/val sets
-6. **Frozen vs. Fine-tuned Backbone**: ViT backbone is fine-tuned (not frozen) for domain adaptation
-
----
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Missing Images**: If images are not found, check:
-   - Image filenames match exactly (case-sensitive)
-   - Brand folder names are lowercase
-   - Path structure matches expected pattern
-
-2. **CSV Column Mismatch**: Ensure all required columns are present:
-   - `Image Name`, `Brand`, `Price`, `Authentic`
-
-3. **Price Scaling Error**: Make sure price scaler is fit on training data only (done automatically)
-
-4. **Brand Encoding Error**: Ensure test brands are in the training brand set, or handle unknown brands in preprocessing
-
-5. **CUDA Out of Memory**: Reduce `BATCH_SIZE` or `IMG_SIZE`
+6. **Partial Fine-Tuning**: Freezes first 2 transformer layers (preserves general features) while fine-tuning remaining 10 layers (learns domain-specific patterns)
+7. **Minimal Augmentation**: Preserves authentic details (text, logos) while still providing some regularization
+8. **Lower Prediction Threshold**: 0.4 instead of 0.5 reduces false positives (authentic shoes incorrectly marked as fake)
+9. **Early Stopping**: Prevents overfitting by stopping when validation accuracy doesn't improve for 7 epochs
 
 ---
 
