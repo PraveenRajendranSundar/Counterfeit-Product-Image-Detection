@@ -366,24 +366,3 @@ Project Root/
 ```
 
 ---
-
-## Future Improvements
-
-- [ ] Add data augmentation for better generalization
-- [ ] Implement ensemble methods
-- [ ] Add explainability (attention visualization)
-- [ ] Support for additional brands
-- [ ] Real-time inference API
-- [ ] Confidence calibration
-
----
-
-## License
-
-This project is for educational purposes.
-
----
-
-## Contact
-
-For questions or issues, please refer to the project repository or contact the development team.
