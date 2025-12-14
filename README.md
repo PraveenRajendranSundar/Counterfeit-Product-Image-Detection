@@ -12,7 +12,7 @@ This project implements a binary classifier that predicts whether a sneaker list
 
 ### Implementation (Colab Notebook)
 
-[https://colab.research.google.com/drive/1v31ueZuGqZVygRCz74EauxcQ_uSfQ06y?usp=sharing](Link to Colab Notebook)
+[https://colab.research.google.com/drive/1v31ueZuGqZVygRCz74EauxcQ_uSfQ06y?usp=sharing] (Link to Colab Notebook)
 
 ### Model Architecture
 
