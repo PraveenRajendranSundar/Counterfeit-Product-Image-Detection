@@ -10,6 +10,10 @@ This project implements a binary classifier that predicts whether a sneaker list
 2. **Brand Information**: Embedding layer maps brand names to learned representations, helping the model understand brand-specific authentic patterns
 3. **Price Information**: Price is used as a decision factor (generally, authentic sneakers have higher prices than counterfeits)
 
+### Implementation (Colab Notebook)
+
+[https://colab.research.google.com/drive/1v31ueZuGqZVygRCz74EauxcQ_uSfQ06y?usp=sharing](Link to Colab Notebook)
+
 ### Model Architecture
 
 The model (`ViTMultiHeadImproved`) consists of:
